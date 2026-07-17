@@ -45,11 +45,19 @@ async function uploadImageFromUrl(
   imageUrl: string,
   apiKey: string,
 ): Promise<{ token: string; fileType: string }> {
-  // Pass a custom browser User-Agent to bypass 403 Forbidden blocks from Vecteezy/PNGTree
+  const urlObj = new URL(imageUrl);
+
+  // Spoof a complete browser request, including Referer to pass hotlink protection (Vecteezy, PNGTree, etc.)
   const imageRes = await fetch(imageUrl, {
     headers: {
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Referer": `${urlObj.protocol}//${urlObj.hostname}/`,
+      "Sec-Fetch-Dest": "image",
+      "Sec-Fetch-Mode": "no-cors",
+      "Sec-Fetch-Site": "cross-site",
     },
   });
 
@@ -57,7 +65,7 @@ async function uploadImageFromUrl(
     throw new Error(`Could not fetch product image: ${imageRes.status} ${imageUrl}`);
   }
 
-  const contentType = imageRes.headers.get("content-type") ?? "image/jpeg";
+  const contentType = imageRes.headers.get("content-type") ?? "image/png";
   const fileType = contentType.includes("png")
     ? "png"
     : contentType.includes("webp")
