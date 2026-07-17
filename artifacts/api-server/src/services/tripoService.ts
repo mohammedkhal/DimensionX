@@ -4,6 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 import { logger } from "../lib/logger";
 
 const TRIPO_BASE = "https://api.tripo3d.ai/v2/openapi";
@@ -40,39 +41,55 @@ async function tripoGet(endpoint: string, apiKey: string) {
   return data.data;
 }
 
-/** Upload an image from a public URL to Tripo and return the file token + type. */
-async function uploadImageFromUrl(
-  imageUrl: string,
+/**
+ * Downloads a protected URL using system `curl` (bypasses Cloudflare/Vecteezy 403 TLS blocks)
+ * or uses local file path directly, then uploads to Tripo3D.
+ */
+async function uploadImageToTripo(
+  imageSource: string,
+  outputDir: string,
   apiKey: string,
 ): Promise<{ token: string; fileType: string }> {
-  const urlObj = new URL(imageUrl);
+  let localFilePath = imageSource;
+  let isTempFile = false;
 
-  // Spoof a complete browser request, including Referer to pass hotlink protection (Vecteezy, PNGTree, etc.)
-  const imageRes = await fetch(imageUrl, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-      "Referer": `${urlObj.protocol}//${urlObj.hostname}/`,
-      "Sec-Fetch-Dest": "image",
-      "Sec-Fetch-Mode": "no-cors",
-      "Sec-Fetch-Site": "cross-site",
-    },
-  });
+  // If source is a web URL, download locally using `curl`
+  if (imageSource.startsWith("http://") || imageSource.startsWith("https://")) {
+    const urlObj = new URL(imageSource);
+    const referer = `${urlObj.protocol}//${urlObj.hostname}/`;
+    localFilePath = path.join(outputDir, `source_temp_${Date.now()}`);
+    isTempFile = true;
 
-  if (!imageRes.ok) {
-    throw new Error(`Could not fetch product image: ${imageRes.status} ${imageUrl}`);
+    logger.info({ imageSource }, "Downloading protected image via curl");
+
+    // Use system curl to bypass Cloudflare TLS fingerprinting
+    const curlCmd = [
+      `curl -sL`,
+      `-A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"`,
+      `-H "Referer: ${referer}"`,
+      `-H "Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"`,
+      `"${imageSource}"`,
+      `-o "${localFilePath}"`,
+    ].join(" ");
+
+    execSync(curlCmd);
+
+    if (!fs.existsSync(localFilePath) || fs.statSync(localFilePath).size === 0) {
+      if (isTempFile && fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath);
+      throw new Error(`Failed to download image from: ${imageSource}`);
+    }
   }
 
-  const contentType = imageRes.headers.get("content-type") ?? "image/png";
-  const fileType = contentType.includes("png")
+  // Determine file type
+  const fileBuffer = fs.readFileSync(localFilePath);
+  const fileType = imageSource.toLowerCase().includes("png")
     ? "png"
-    : contentType.includes("webp")
+    : imageSource.toLowerCase().includes("webp")
       ? "webp"
       : "jpeg";
 
-  const blob = await imageRes.blob();
+  // Upload to Tripo3D
+  const blob = new Blob([fileBuffer], { type: `image/${fileType}` });
   const formData = new FormData();
   formData.append("file", blob, `product.${fileType}`);
 
@@ -81,6 +98,11 @@ async function uploadImageFromUrl(
     headers: { Authorization: `Bearer ${apiKey}` },
     body: formData,
   });
+
+  // Clean up downloaded temp file
+  if (isTempFile && fs.existsSync(localFilePath)) {
+    fs.unlinkSync(localFilePath);
+  }
 
   const result = (await res.json()) as { code: number; message?: string; data: any };
   if (!res.ok || result.code !== 0) {
@@ -167,9 +189,9 @@ export interface ConversionResult {
 }
 
 /**
- * Full pipeline: upload → create task → poll → download GLB (+ convert and download USDZ).
+ * Full pipeline: download image locally via curl -> upload -> create task -> poll -> download GLB (+ USDZ).
  * @param productId  Used to create the output directory `public/models/<id>/`.
- * @param imagePath  Public URL of the product image.
+ * @param imagePath  Public URL or local file path of the product image.
  */
 export async function convertImageToModel(
   productId: string,
@@ -183,8 +205,8 @@ export async function convertImageToModel(
 
   logger.info({ productId, imagePath }, "Starting Tripo conversion");
 
-  // 1. Upload image
-  const { token, fileType } = await uploadImageFromUrl(imagePath, apiKey);
+  // 1. Download image locally via curl & upload to Tripo
+  const { token, fileType } = await uploadImageToTripo(imagePath, outputDir, apiKey);
   logger.info({ productId, fileType }, "Image uploaded to Tripo");
 
   // 2. Create primary 3D task
@@ -200,11 +222,10 @@ export async function convertImageToModel(
   await downloadFile(output.model as string, glbLocalPath);
   logger.info({ productId }, "GLB downloaded");
 
-  // 5. Handle USDZ output
+  // 5. Handle USDZ output (request conversion if not included in initial output)
   let usdzPath: string | null = null;
   let usdzUrl: string | undefined = output.model_usdz ?? output.usdz;
 
-  // If USDZ isn't included in initial task output, request a conversion task
   if (!usdzUrl) {
     try {
       logger.info({ productId, taskId }, "Requesting USDZ model conversion task");
