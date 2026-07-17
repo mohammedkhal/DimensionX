@@ -7,8 +7,7 @@ import {
   UpdateProductBody,
   ListProductsQueryParams,
 } from "@workspace/api-zod";
-import path from "path";
-import fs from "fs";
+import { convertImageToModel } from "../services/tripoService";
 
 const router: IRouter = Router();
 
