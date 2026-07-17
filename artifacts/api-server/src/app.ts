@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
+import path from "path";
 import {
   CLERK_PROXY_PATH,
   clerkProxyMiddleware,
@@ -47,6 +48,9 @@ app.use(
     ),
   })),
 );
+
+// Serve generated 3D model files (GLB/USDZ) as static assets under /api/models
+app.use("/api/models", express.static(path.join(process.cwd(), "public", "models")));
 
 app.use("/api", router);
 

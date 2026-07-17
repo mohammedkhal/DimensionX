@@ -38,8 +38,9 @@ export default function Settings() {
     mutation: {
       onSuccess: (updatedMe) => {
         toast({ title: "Settings saved", description: "Your profile has been updated." });
-        // Update cache manually to avoid refetch flash
+        // Update cache immediately and also invalidate to trigger a refetch
         queryClient.setQueryData(getGetMeQueryKey(), updatedMe);
+        queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
       },
       onError: (err) => {
         toast({ title: "Failed to save", description: err.error || "An error occurred", variant: "destructive" });

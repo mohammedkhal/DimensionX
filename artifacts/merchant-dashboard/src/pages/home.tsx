@@ -8,7 +8,7 @@ export default function Home() {
       <header className="flex h-16 items-center px-6 border-b bg-white">
         <div className="flex items-center gap-2">
           <Box className="h-6 w-6 text-primary" />
-          <span className="text-xl font-bold tracking-tight text-foreground">Nexus Center</span>
+          <span className="text-xl font-bold tracking-tight text-foreground">DimensionX</span>
         </div>
         <nav className="ml-auto flex items-center gap-4">
           <Link href="/sign-in" className="text-sm font-medium text-muted-foreground hover:text-foreground">
@@ -78,7 +78,7 @@ export default function Home() {
       </main>
       
       <footer className="py-8 text-center text-sm text-gray-500 border-t">
-        <p>© {new Date().getFullYear()} Nexus Center. All rights reserved.</p>
+        <p>© {new Date().getFullYear()} DimensionX. All rights reserved.</p>
       </footer>
     </div>
   );

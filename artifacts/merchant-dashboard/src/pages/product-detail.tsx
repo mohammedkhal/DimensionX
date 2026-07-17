@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import { 
   useGetProduct, 
@@ -6,7 +6,8 @@ import {
   useTriggerConversion,
   useGetEmbedCode,
   getGetEmbedCodeQueryKey,
-  useDeleteProduct
+  useDeleteProduct,
+  useGetMe,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -84,10 +85,18 @@ export default function ProductDetail() {
   const { id } = useParams();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: me } = useGetMe();
   const [activeTab, setActiveTab] = useState("en");
   const [embedModalOpen, setEmbedModalOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [, setLocation] = useState("");
+
+  // Default the active language tab to the merchant's saved locale
+  useEffect(() => {
+    if (me?.locale && LOCALES.some(l => l.code === me.locale)) {
+      setActiveTab(me.locale);
+    }
+  }, [me?.locale]);
 
   const { data: product, isLoading, refetch } = useGetProduct(id || "", {
     query: {
@@ -164,8 +173,8 @@ export default function ProductDetail() {
         return (
           <div className="bg-gray-100 rounded-lg overflow-hidden border relative h-[500px]">
             <model-viewer
-              src={product.glbPath}
-              ios-src={product.usdzPath}
+              src={product.glbPath ? `/api${product.glbPath}` : undefined}
+              ios-src={product.usdzPath ? `/api${product.usdzPath}` : undefined}
               alt={product.name.en}
               ar
               auto-rotate

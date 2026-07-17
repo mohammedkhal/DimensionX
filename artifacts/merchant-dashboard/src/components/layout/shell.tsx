@@ -61,7 +61,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <aside className="hidden w-64 flex-col border-r border-sidebar-border bg-sidebar md:flex">
         <div className="flex h-16 flex-shrink-0 items-center px-6 border-b border-sidebar-border gap-3 text-sidebar-foreground">
           <Box className="h-6 w-6 text-sidebar-primary" />
-          <span className="font-semibold tracking-tight text-lg">Nexus Center</span>
+          <span className="font-semibold tracking-tight text-lg">DimensionX</span>
         </div>
         <div className="flex flex-1 flex-col overflow-y-auto pt-2">
           <NavItems pathname={pathname} />
@@ -95,7 +95,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               <SheetContent side="left" className="w-64 p-0 bg-sidebar border-sidebar-border flex flex-col">
                 <div className="flex h-16 flex-shrink-0 items-center px-6 border-b border-sidebar-border gap-3 text-sidebar-foreground">
                   <Box className="h-6 w-6 text-sidebar-primary" />
-                  <span className="font-semibold tracking-tight text-lg">Nexus Center</span>
+                  <span className="font-semibold tracking-tight text-lg">DimensionX</span>
                 </div>
                 <div className="flex flex-1 flex-col overflow-y-auto">
                   <NavItems pathname={pathname} />
