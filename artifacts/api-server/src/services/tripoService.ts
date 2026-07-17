@@ -1,101 +1,75 @@
 /**
- * Tripo3D API service — image-to-3D-model conversion with step-by-step diagnostic logging.
- * Docs: https://platform.tripo3d.ai/docs
+ * Tripo3D API Service — Image-to-3D Conversion Pipeline
+ * Base OpenAPI Docs: https://platform.tripo3d.ai/docs
  */
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
-import { logger } from "../lib/logger";
 
 const TRIPO_BASE = "https://api.tripo3d.ai/v2/openapi";
-const MAX_WAIT_MS = 5 * 60 * 1000; // 5 minutes
-const POLL_INTERVAL_MS = 4000;
+const MAX_WAIT_MS = 5 * 60 * 1000; // 5 minutes timeout
+const POLL_INTERVAL_MS = 4000; // Poll status every 4 seconds
 
-// ── helpers ─────────────────────────────────────────────────────────────────
+// ── Instant Console Logger (bypasses logger buffering) ──────────────────────
+const log = {
+  info: (msg: string, data?: any) =>
+    console.log(`[TRIPO INFO] ${msg}`, data ? JSON.stringify(data) : ""),
+  warn: (msg: string, data?: any) =>
+    console.warn(`[TRIPO WARN] ${msg}`, data ? JSON.stringify(data) : ""),
+  error: (msg: string, data?: any) =>
+    console.error(`[TRIPO ERROR] ${msg}`, data ? JSON.stringify(data) : ""),
+};
 
-async function tripoPost(endpoint: string, body: unknown, apiKey: string) {
-  const url = `${TRIPO_BASE}${endpoint}`;
-  logger.info({ url, body }, "[Tripo API] POST Request initiating");
+// ── HTTP Helper: Safe Body Inspection Before Parsing JSON ───────────────────
+async function safeFetch(url: string, options: RequestInit) {
+  log.info(`Requesting ${options.method || "GET"} -> ${url}`);
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
+  const res = await fetch(url, options);
   const rawText = await res.text();
-  logger.info({ status: res.status, statusText: res.statusText, rawText }, "[Tripo API] POST Response received");
+
+  log.info(`Response Status: HTTP ${res.status} (${res.statusText})`);
 
   if (!rawText || rawText.trim() === "") {
-    throw new Error(`[Tripo Error] Server returned an EMPTY response body (HTTP ${res.status}) on POST ${endpoint}`);
+    throw new Error(
+      `[HTTP Error ${res.status}] Tripo API returned an completely EMPTY response body from: ${url}`
+    );
   }
 
   let data: any;
   try {
     data = JSON.parse(rawText);
   } catch (err) {
-    throw new Error(`[Tripo Error] Failed to parse JSON on POST ${endpoint}. Raw response was: "${rawText.slice(0, 300)}"`);
+    throw new Error(
+      `[JSON Parse Failure] Endpoint returned non-JSON response (HTTP ${res.status}): "${rawText.slice(0, 300)}"`
+    );
   }
 
   if (!res.ok || data.code !== 0) {
-    throw new Error(`[Tripo Error] POST ${endpoint} failed (code: ${data.code}): ${data.message ?? res.statusText}`);
+    throw new Error(
+      `[Tripo API Error] Code ${data.code ?? "N/A"}: ${data.message || res.statusText}`
+    );
   }
 
   return data.data;
 }
 
-async function tripoGet(endpoint: string, apiKey: string) {
-  const url = `${TRIPO_BASE}${endpoint}`;
-  logger.info({ url }, "[Tripo API] GET Request initiating");
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-
-  const rawText = await res.text();
-  logger.info({ status: res.status, statusText: res.statusText, rawText }, "[Tripo API] GET Response received");
-
-  if (!rawText || rawText.trim() === "") {
-    throw new Error(`[Tripo Error] Server returned an EMPTY response body (HTTP ${res.status}) on GET ${endpoint}`);
-  }
-
-  let data: any;
-  try {
-    data = JSON.parse(rawText);
-  } catch (err) {
-    throw new Error(`[Tripo Error] Failed to parse JSON on GET ${endpoint}. Raw response was: "${rawText.slice(0, 300)}"`);
-  }
-
-  if (!res.ok || data.code !== 0) {
-    throw new Error(`[Tripo Error] GET ${endpoint} failed (code: ${data.code}): ${data.message ?? res.statusText}`);
-  }
-
-  return data.data;
-}
-
-/**
- * Downloads a protected URL using system `curl` (bypasses Cloudflare/Vecteezy 403 TLS blocks)
- * or uses local file path directly, then uploads to Tripo3D.
- */
+// ── Step 1: Download Image via Curl & Upload to Tripo ───────────────────────
 async function uploadImageToTripo(
   imageSource: string,
   outputDir: string,
-  apiKey: string,
+  apiKey: string
 ): Promise<{ token: string; fileType: string }> {
   let localFilePath = imageSource;
   let isTempFile = false;
 
-  // If source is a web URL, download locally using `curl`
+  // 1A. If imageSource is a public URL, download it with system curl to bypass anti-bot/403 blocks
   if (imageSource.startsWith("http://") || imageSource.startsWith("https://")) {
     const urlObj = new URL(imageSource);
     const referer = `${urlObj.protocol}//${urlObj.hostname}/`;
     localFilePath = path.join(outputDir, `source_temp_${Date.now()}`);
     isTempFile = true;
 
-    logger.info({ imageSource, localFilePath }, "[Image Download] Initiating curl download for protected URL");
+    log.info(`Downloading external image URL with curl: ${imageSource}`);
 
     const curlCmd = [
       `curl -sL`,
@@ -109,24 +83,24 @@ async function uploadImageToTripo(
     try {
       execSync(curlCmd);
     } catch (curlErr: any) {
-      logger.error({ curlErr: curlErr.message }, "[Image Download] curl command failed during execution");
-      throw new Error(`curl download failed for ${imageSource}: ${curlErr.message}`);
+      log.error(`Curl command execution failed!`, curlErr.message);
+      throw new Error(`Failed to download image from ${imageSource}: ${curlErr.message}`);
     }
 
     if (!fs.existsSync(localFilePath)) {
-      throw new Error(`[Image Download] Local file was not created after curl download: ${localFilePath}`);
+      throw new Error(`Curl output file missing: ${localFilePath}`);
     }
 
     const fileSize = fs.statSync(localFilePath).size;
-    logger.info({ localFilePath, fileSize }, "[Image Download] Curl completed");
+    log.info(`Curl download complete. File size: ${fileSize} bytes`);
 
     if (fileSize === 0) {
-      if (isTempFile && fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath);
-      throw new Error(`[Image Download] Downloaded file is 0 bytes (Empty payload) from: ${imageSource}`);
+      if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath);
+      throw new Error(`Downloaded image from ${imageSource} was empty (0 bytes).`);
     }
   }
 
-  // Determine file type
+  // 1B. Read local file and construct multipart form data upload
   const fileBuffer = fs.readFileSync(localFilePath);
   const fileType = imageSource.toLowerCase().includes("png")
     ? "png"
@@ -134,124 +108,141 @@ async function uploadImageToTripo(
       ? "webp"
       : "jpeg";
 
-  logger.info({ localFilePath, fileType, bufferLength: fileBuffer.length }, "[Tripo Upload] Preparing FormData for upload");
+  log.info(`Preparing FormData file upload to Tripo (/upload)`);
 
-  // Upload to Tripo3D
   const blob = new Blob([fileBuffer], { type: `image/${fileType}` });
   const formData = new FormData();
   formData.append("file", blob, `product.${fileType}`);
 
-  const uploadUrl = `${TRIPO_BASE}/upload`;
-  logger.info({ uploadUrl }, "[Tripo Upload] POSTing file to Tripo /upload");
-
-  const res = await fetch(uploadUrl, {
+  // Perform upload
+  const uploadRes = await fetch(`${TRIPO_BASE}/upload`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: formData,
   });
 
-  const rawUploadText = await res.text();
-  logger.info({ status: res.status, statusText: res.statusText, rawUploadText }, "[Tripo Upload] Raw response received");
-
-  // Clean up downloaded temp file
+  // Clean up temporary image download file
   if (isTempFile && fs.existsSync(localFilePath)) {
     fs.unlinkSync(localFilePath);
-    logger.info({ localFilePath }, "[Image Download] Cleaned up temp file");
+    log.info(`Cleaned up temporary image download file`);
   }
+
+  const rawUploadText = await uploadRes.text();
+  log.info(`Upload Response Status: HTTP ${uploadRes.status}`);
 
   if (!rawUploadText || rawUploadText.trim() === "") {
-    throw new Error(`[Tripo Upload Error] Tripo /upload returned an EMPTY response (HTTP ${res.status})`);
+    throw new Error(
+      `[Tripo Upload Error] Endpoint returned an empty payload (HTTP ${uploadRes.status})`
+    );
   }
 
-  let result: any;
+  let uploadResult: any;
   try {
-    result = JSON.parse(rawUploadText);
-  } catch (err) {
-    throw new Error(`[Tripo Upload Error] /upload response was not valid JSON. Response body: "${rawUploadText.slice(0, 300)}"`);
+    uploadResult = JSON.parse(rawUploadText);
+  } catch (e) {
+    throw new Error(
+      `[Tripo Upload Error] Could not parse upload JSON. Server returned: "${rawUploadText.slice(0, 300)}"`
+    );
   }
 
-  if (!res.ok || result.code !== 0) {
-    throw new Error(`[Tripo Upload Error] Upload failed with code ${result.code}: ${result.message ?? res.statusText}`);
+  if (!uploadRes.ok || uploadResult.code !== 0) {
+    throw new Error(
+      `[Tripo Upload Failed] Code ${uploadResult.code}: ${uploadResult.message || uploadRes.statusText}`
+    );
   }
 
-  logger.info({ imageToken: result.data.image_token }, "[Tripo Upload] Successfully received image token");
-  return { token: result.data.image_token as string, fileType };
+  const token = uploadResult.data.image_token as string;
+  log.info(`Successfully received image_token: ${token}`);
+  return { token, fileType };
 }
 
-/** Create an image-to-model task and return the task_id. */
+// ── Step 2: Create 3D Task ──────────────────────────────────────────────────
 async function createImageToModelTask(
   fileToken: string,
   fileType: string,
-  apiKey: string,
+  apiKey: string
 ): Promise<string> {
-  logger.info({ fileToken, fileType }, "[Tripo Task] Creating image_to_model task");
-  const data = await tripoPost(
-    "/task",
-    {
+  log.info(`Creating image_to_model task...`);
+  const data = await safeFetch(`${TRIPO_BASE}/task`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
       type: "image_to_model",
       file: { type: fileType, file_token: fileToken },
       model_version: "v2.0-20240919",
-    },
-    apiKey,
-  );
+    }),
+  });
+
+  log.info(`3D Generation Task Created. Task ID: ${data.task_id}`);
   return data.task_id as string;
 }
 
-/** Create a format conversion task (e.g. convert GLB task output to USDZ). */
+// ── Step 3: Format Conversion Task (GLB -> USDZ) ───────────────────────────
 async function createConvertFormatTask(
   originalTaskId: string,
   targetFormat: "usdz" | "obj" | "fbx" | "stl",
-  apiKey: string,
+  apiKey: string
 ): Promise<string> {
-  logger.info({ originalTaskId, targetFormat }, "[Tripo Task] Creating convert_model task");
-  const data = await tripoPost(
-    "/task",
-    {
+  log.info(`Creating format conversion sub-task (${targetFormat})...`);
+  const data = await safeFetch(`${TRIPO_BASE}/task`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
       type: "convert_model",
       original_task_id: originalTaskId,
       format: targetFormat,
-    },
-    apiKey,
-  );
+    }),
+  });
+
   return data.task_id as string;
 }
 
-/** Poll the task endpoint until it succeeds, fails, or times out. */
+// ── Step 4: Poll Task Status Until Finished ─────────────────────────────────
 async function pollTask(taskId: string, apiKey: string): Promise<any> {
   const deadline = Date.now() + MAX_WAIT_MS;
 
   while (Date.now() < deadline) {
-    const data = await tripoGet(`/task/${taskId}`, apiKey);
+    const data = await safeFetch(`${TRIPO_BASE}/task/${taskId}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
     const status: string = data.status;
     const progress: number = data.progress ?? 0;
 
-    logger.info({ taskId, status, progress }, "[Tripo Poll] Task progress update");
+    log.info(`Task Poll -> ID: ${taskId} | Status: ${status} | Progress: ${progress}%`);
 
     if (status === "success") return data.output;
 
     if (status === "failed" || status === "cancelled") {
       throw new Error(
-        `[Tripo Task Error] Task status marked as '${status}': ${data.message ?? "No additional details"}`,
+        `Tripo task processing failed with status '${status}': ${data.message || "No error details provided."}`
       );
     }
 
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 
-  throw new Error("[Tripo Poll] Task conversion timed out after 5 minutes");
+  throw new Error(`Tripo task conversion timed out after 5 minutes.`);
 }
 
-/** Download a remote file and write it to localPath. */
+// ── Step 5: Download Asset File to Local Disk ──────────────────────────────
 async function downloadFile(url: string, localPath: string): Promise<void> {
-  logger.info({ url, localPath }, "[Model Download] Downloading generated 3D asset file");
+  log.info(`Downloading output asset file: ${url}`);
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`[Model Download Error] Download failed (HTTP ${res.status}): ${url}`);
+  if (!res.ok) throw new Error(`Download failed (HTTP ${res.status}): ${url}`);
   const buf = await res.arrayBuffer();
   fs.writeFileSync(localPath, Buffer.from(buf));
-  logger.info({ localPath, bytes: buf.byteLength }, "[Model Download] Saved file to disk");
+  log.info(`File saved to local path: ${localPath} (${buf.byteLength} bytes)`);
 }
 
-// ── public API ───────────────────────────────────────────────────────────────
+// ── PUBLIC MAIN EXPORT ───────────────────────────────────────────────────────
 
 export interface ConversionResult {
   glbPath: string;
@@ -259,65 +250,62 @@ export interface ConversionResult {
 }
 
 /**
- * Full pipeline: download image locally via curl -> upload -> create task -> poll -> download GLB (+ USDZ).
- * @param productId  Used to create the output directory `public/models/<id>/`.
- * @param imagePath  Public URL or local file path of the product image.
+ * Full Pipeline Executer
+ * @param productId  Subfolder created in public/models/<productId>
+ * @param imagePath  Public Web URL or Local File Path
  */
 export async function convertImageToModel(
   productId: string,
-  imagePath: string,
+  imagePath: string
 ): Promise<ConversionResult> {
+  console.log("=========================================================");
+  log.info(`Starting Tripo 3D Conversion Pipeline`, { productId, imagePath });
+  console.log("=========================================================");
+
   const apiKey = process.env.TRIPO_API_KEY;
   if (!apiKey) {
-    logger.error("TRIPO_API_KEY environment variable is NOT set!");
+    log.error("TRIPO_API_KEY environment variable is NOT set!");
     throw new Error("TRIPO_API_KEY environment variable is not set");
   }
 
   const outputDir = path.join(process.cwd(), "public", "models", productId);
   fs.mkdirSync(outputDir, { recursive: true });
 
-  logger.info({ productId, imagePath, outputDir }, "[Pipeline Start] Starting Tripo 3D Conversion");
-
-  // 1. Download image locally via curl & upload to Tripo
+  // 1. Upload
   const { token, fileType } = await uploadImageToTripo(imagePath, outputDir, apiKey);
-  logger.info({ productId, fileType, token }, "[Pipeline Step 1] Image successfully uploaded to Tripo");
 
-  // 2. Create primary 3D task
+  // 2. Task
   const taskId = await createImageToModelTask(token, fileType, apiKey);
-  logger.info({ productId, taskId }, "[Pipeline Step 2] Primary 3D task created");
 
-  // 3. Poll primary task
+  // 3. Poll
   const output = await pollTask(taskId, apiKey);
-  logger.info({ productId, taskId, output }, "[Pipeline Step 3] Primary 3D task completed");
 
-  // 4. Download primary GLB model
+  // 4. Download GLB
   const glbLocalPath = path.join(outputDir, "model.glb");
   await downloadFile(output.model as string, glbLocalPath);
-  logger.info({ productId, glbLocalPath }, "[Pipeline Step 4] GLB model saved");
 
-  // 5. Handle USDZ output
+  // 5. Convert & Download USDZ
   let usdzPath: string | null = null;
   let usdzUrl: string | undefined = output.model_usdz ?? output.usdz;
 
   if (!usdzUrl) {
     try {
-      logger.info({ productId, taskId }, "[Pipeline Step 5] USDZ not in output. Requesting USDZ format conversion task");
+      log.info(`USDZ not provided in primary output. Requesting format conversion...`);
       const convertTaskId = await createConvertFormatTask(taskId, "usdz", apiKey);
       const convertOutput = await pollTask(convertTaskId, apiKey);
       usdzUrl = convertOutput.model ?? convertOutput.model_usdz;
     } catch (err: any) {
-      logger.warn({ productId, err: err.message }, "[Pipeline Step 5] USDZ conversion failed, skipping USDZ model");
+      log.warn(`USDZ format conversion failed, skipping USDZ: ${err.message}`);
     }
   }
 
-  // Download USDZ if available
   if (usdzUrl) {
     const usdzLocalPath = path.join(outputDir, "model.usdz");
     await downloadFile(usdzUrl, usdzLocalPath);
     usdzPath = `/models/${productId}/model.usdz`;
-    logger.info({ productId, usdzPath }, "[Pipeline Step 5] USDZ model saved");
   }
 
+  log.info(`Pipeline Finished Successfully!`);
   return {
     glbPath: `/models/${productId}/model.glb`,
     usdzPath,
