@@ -179,16 +179,14 @@ router.post("/products/:id/convert", requireAuth, async (req, res): Promise<void
 
   res.status(202).json({ productId: id, conversionStatus: "pending", message: "Conversion queued" });
 
-  // Mock async processing — 10s delay
-  setTimeout(async () => {
+  // Run Tripo conversion asynchronously — does not block the HTTP response
+  (async () => {
     try {
-      const publicDir = path.join(process.cwd(), "public", "models", id);
-      fs.mkdirSync(publicDir, { recursive: true });
-      const glbPath = `/models/${id}/model.glb`;
-      const usdzPath = `/models/${id}/model.usdz`;
-      // Write placeholder binary files
-      fs.writeFileSync(path.join(publicDir, "model.glb"), Buffer.from("GLB placeholder"));
-      fs.writeFileSync(path.join(publicDir, "model.usdz"), Buffer.from("USDZ placeholder"));
+      if (!product.imagePath) {
+        throw new Error("Product has no image URL — cannot convert without a source image");
+      }
+
+      const { glbPath, usdzPath } = await convertImageToModel(id, product.imagePath);
 
       await db.update(productsTable).set({
         conversionStatus: "completed",
@@ -200,14 +198,15 @@ router.post("/products/:id/convert", requireAuth, async (req, res): Promise<void
         status: "completed",
         completedAt: new Date(),
       }).where(eq(conversionJobsTable.id, job!.id));
-    } catch {
+    } catch (err: any) {
+      const errorMessage = err?.message ?? "Tripo conversion failed";
       await db.update(productsTable).set({ conversionStatus: "failed" }).where(eq(productsTable.id, id));
       await db.update(conversionJobsTable).set({
         status: "failed",
-        errorMessage: "Mock conversion failed",
+        errorMessage,
       }).where(eq(conversionJobsTable.id, job!.id));
     }
-  }, 10000);
+  })();
 });
 
 // Generate embed code
@@ -220,7 +219,7 @@ router.get("/products/:id/embed-code", requireAuth, async (req, res): Promise<vo
     res.status(404).json({ error: "Product not found" });
     return;
   }
-  if (product.conversionStatus !== "completed" || !product.glbPath || !product.usdzPath) {
+  if (product.conversionStatus !== "completed" || !product.glbPath) {
     res.status(400).json({ error: "3D conversion not completed for this product" });
     return;
   }
