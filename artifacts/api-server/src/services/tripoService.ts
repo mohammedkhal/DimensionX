@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import { logger } from "../lib/logger";
 
-const TRIPO_BASE = "https://platform.tripo3d.ai/v2/openapi";
+const TRIPO_BASE = "https://api.tripo3d.ai/v2/openapi";
 const MAX_WAIT_MS = 5 * 60 * 1000; // 5 minutes
 const POLL_INTERVAL_MS = 4000;
 
@@ -45,7 +45,14 @@ async function uploadImageFromUrl(
   imageUrl: string,
   apiKey: string,
 ): Promise<{ token: string; fileType: string }> {
-  const imageRes = await fetch(imageUrl);
+  // Pass a custom browser User-Agent to bypass 403 Forbidden blocks from Vecteezy/PNGTree
+  const imageRes = await fetch(imageUrl, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    },
+  });
+
   if (!imageRes.ok) {
     throw new Error(`Could not fetch product image: ${imageRes.status} ${imageUrl}`);
   }
@@ -86,8 +93,25 @@ async function createImageToModelTask(
     {
       type: "image_to_model",
       file: { type: fileType, file_token: fileToken },
-      // Request highest quality
       model_version: "v2.0-20240919",
+    },
+    apiKey,
+  );
+  return data.task_id as string;
+}
+
+/** Create a format conversion task (e.g. convert GLB task output to USDZ). */
+async function createConvertFormatTask(
+  originalTaskId: string,
+  targetFormat: "usdz" | "obj" | "fbx" | "stl",
+  apiKey: string,
+): Promise<string> {
+  const data = await tripoPost(
+    "/task",
+    {
+      type: "convert_model",
+      original_task_id: originalTaskId,
+      format: targetFormat,
     },
     apiKey,
   );
@@ -135,7 +159,7 @@ export interface ConversionResult {
 }
 
 /**
- * Full pipeline: upload → create task → poll → download GLB (+ USDZ if available).
+ * Full pipeline: upload → create task → poll → download GLB (+ convert and download USDZ).
  * @param productId  Used to create the output directory `public/models/<id>/`.
  * @param imagePath  Public URL of the product image.
  */
@@ -155,22 +179,36 @@ export async function convertImageToModel(
   const { token, fileType } = await uploadImageFromUrl(imagePath, apiKey);
   logger.info({ productId, fileType }, "Image uploaded to Tripo");
 
-  // 2. Create task
+  // 2. Create primary 3D task
   const taskId = await createImageToModelTask(token, fileType, apiKey);
   logger.info({ productId, taskId }, "Tripo task created");
 
-  // 3. Poll
+  // 3. Poll primary task
   const output = await pollTask(taskId, apiKey);
   logger.info({ productId, taskId, output }, "Tripo task succeeded");
 
-  // 4. Download GLB
+  // 4. Download primary GLB model
   const glbLocalPath = path.join(outputDir, "model.glb");
   await downloadFile(output.model as string, glbLocalPath);
   logger.info({ productId }, "GLB downloaded");
 
-  // 5. Download USDZ if Tripo provided it (field varies by model version)
+  // 5. Handle USDZ output
   let usdzPath: string | null = null;
-  const usdzUrl: string | undefined = output.model_usdz ?? output.usdz;
+  let usdzUrl: string | undefined = output.model_usdz ?? output.usdz;
+
+  // If USDZ isn't included in initial task output, request a conversion task
+  if (!usdzUrl) {
+    try {
+      logger.info({ productId, taskId }, "Requesting USDZ model conversion task");
+      const convertTaskId = await createConvertFormatTask(taskId, "usdz", apiKey);
+      const convertOutput = await pollTask(convertTaskId, apiKey);
+      usdzUrl = convertOutput.model ?? convertOutput.model_usdz;
+    } catch (err) {
+      logger.warn({ productId, err }, "USDZ conversion failed, skipping USDZ model");
+    }
+  }
+
+  // Download USDZ if available
   if (usdzUrl) {
     const usdzLocalPath = path.join(outputDir, "model.usdz");
     await downloadFile(usdzUrl, usdzLocalPath);
