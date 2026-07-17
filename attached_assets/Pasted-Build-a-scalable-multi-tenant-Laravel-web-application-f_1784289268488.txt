@@ -1,0 +1,49 @@
+Build a scalable, multi-tenant Laravel web application for a Merchant Dashboard. The app must support product catalog management, 3D AR conversion utilities, multi-language localization, product metrics, and embed code generation.
+
+### Tech Stack
+- Backend: Laravel (latest stable version)
+- Database: MySQL (configure standard migrations and structure for MySQL)
+- Frontend: Inertia.js with Vue 3 (using Tailwind CSS for styling)
+- State Management: Pinia (for handling dashboard state at scale)
+- Charting: Chart.js (or vue-chartjs) for displaying dashboard statistics
+- Queue: Database queue driver for processing 3D conversions asynchronously in MySQL
+
+---
+
+### Core Architecture & Specifications
+
+#### 1. Merchant Authentication (Multi-Tenant)
+- Standard secure registration, login, and logout.
+- Every database query must be strictly scoped to the authenticated merchant (merchant_id).
+
+#### 2. Vue 3 Dashboard & Product Statistics
+The main landing dashboard must be a single-page app (SPA) built with Vue 3 rendering interactive KPI widgets and charts:
+- KPI widgets: Total products, Completed 3D conversions, Conversions in queue, External sync ratio.
+- Interactive Chart: Visual representation of 3D conversions processed month-over-month.
+
+#### 3. Global Multi-Language System (EN, AR, ES, FR, ZH)
+- Support English (en), Arabic (ar), Spanish (es), French (fr), and Mandarin Chinese (zh).
+- Implement a custom Laravel middleware (SetLocaleMiddleware) that captures the merchant's selected locale and saves it in the session/database.
+- Load translations dynamically using standard JSON files (e.g., lang/ar.json, lang/en.json).
+- On the Vue 3 frontend, dynamically set the HTML attribute dir="rtl" when Arabic is selected, and dir="ltr" for others.
+- Ensure the layout is fully responsive and flips dynamically using Tailwind CSS logical layout utilities (use ps-, pe-, start-, end- instead of hardcoded left/right paddings and positions).
+
+#### 4. Product Management & Integrations
+- Manual Creation form: Upload 2D product images, set prices, and write localized descriptions.
+- External Sync Interface: Build a modal allowing the merchant to simulate pulling product data from Shopify or Salla. Use the Strategy Pattern on the Laravel backend (ProductImporterInterface with mock drivers SallaImporter and ShopifyImporter).
+
+#### 5. Asynchronous 3D Model Processor
+- Implement a strategy contract: App\Contracts\ThreeDConverterInterface to manage the API calls.
+- Create a configuration in config/services.php to swap providers dynamically (e.g., meshy, mock_service).
+- Write a queueable Job (ProcessThreeDConversion) to handle the conversion in the background. Write a mock converter service that finishes after a 10-second delay and generates placeholder .glb (Android/Web) and .usdz (iOS) files in the public storage directory so we can test the pipeline locally on Replit.
+- Save paths for image_path, glb_path, and usdz_path in the MySQL products table, along with a conversion_status ('idle', 'pending', 'completed', 'failed').
+
+#### 6. AR Preview & Embed Code Copy Button
+- On the Vue product details page, if a product's status is 'completed', show an interactive 3D viewer using Google's <model-viewer> library.
+- Provide a clear "Generate Embed Code" button. When clicked, it displays a modal containing an embeddable HTML/JS code snippet featuring the <model-viewer> targeting that product's specific .glb and .usdz public URLs.
+- Include an active "Copy to Clipboard" button in the modal that copies this code snippet instantly to the user's clipboard using the Clipboard API.
+
+---
+
+### Execution Plan
+Generate all required MySQL migration files, routing configurations (routes/web.php), controllers, service classes, translation files, Inertia Vue pages (such as Dashboard, Product Index, Product Create, Product Detail with the AR player and the clipboard script generator), and the layout components.

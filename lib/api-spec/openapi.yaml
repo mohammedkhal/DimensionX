@@ -3,20 +3,28 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Merchant Dashboard API — multi-tenant product catalog with 3D AR conversion
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: merchants
+    description: Merchant profile operations
+  - name: dashboard
+    description: Dashboard KPIs and charts
+  - name: products
+    description: Product catalog management
+  - name: import
+    description: External product sync (Shopify / Salla)
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,7 +32,339 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /me:
+    get:
+      operationId: getMe
+      tags: [merchants]
+      summary: Get current merchant profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current merchant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Merchant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      operationId: updateMe
+      tags: [merchants]
+      summary: Update merchant profile (locale, display name)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMerchantInput"
+      responses:
+        "200":
+          description: Updated merchant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Merchant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      tags: [dashboard]
+      summary: Get dashboard KPI stats
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: KPI statistics for the current merchant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /dashboard/conversions-chart:
+    get:
+      operationId: getConversionsChart
+      tags: [dashboard]
+      summary: Monthly 3D conversions chart data
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: months
+          in: query
+          schema:
+            type: integer
+            default: 6
+          description: Number of past months to include
+      responses:
+        "200":
+          description: Monthly conversion counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionsChartData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /products:
+    get:
+      operationId: listProducts
+      tags: [products]
+      summary: List products for the current merchant
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: conversionStatus
+          in: query
+          schema:
+            $ref: "#/components/schemas/ConversionStatus"
+        - name: source
+          in: query
+          schema:
+            $ref: "#/components/schemas/ProductSource"
+      responses:
+        "200":
+          description: Paginated product list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Create a new product
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductInput"
+      responses:
+        "201":
+          description: Created product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /products/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getProduct
+      tags: [products]
+      summary: Get a product by ID
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Product detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateProduct
+      tags: [products]
+      summary: Update a product
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductInput"
+      responses:
+        "200":
+          description: Updated product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Delete a product
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /products/{id}/convert:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: triggerConversion
+      tags: [products]
+      summary: Trigger async 3D model conversion for a product
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: Conversion job queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionJobStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /products/{id}/embed-code:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getEmbedCode
+      tags: [products]
+      summary: Generate model-viewer embed HTML for a completed product
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Embed code snippet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /import/preview:
+    get:
+      operationId: previewImport
+      tags: [import]
+      summary: Preview products from an external source (Shopify / Salla mock)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: source
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/ImportSource"
+      responses:
+        "200":
+          description: Preview of importable products
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportPreview"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /import:
+    post:
+      operationId: importProducts
+      tags: [import]
+      summary: Import products from an external source
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportInput"
+      responses:
+        "200":
+          description: Import results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadRequest:
+      description: Bad request / validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
   schemas:
     HealthStatus:
       type: object
@@ -34,3 +374,322 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: object
+      required:
+        - error
+
+    Locale:
+      type: string
+      enum: [en, ar, es, fr, zh]
+
+    ConversionStatus:
+      type: string
+      enum: [idle, pending, completed, failed]
+
+    ProductSource:
+      type: string
+      enum: [manual, shopify, salla]
+
+    ImportSource:
+      type: string
+      enum: [shopify, salla]
+
+    Merchant:
+      type: object
+      properties:
+        id:
+          type: string
+        clerkId:
+          type: string
+        email:
+          type: string
+        displayName:
+          type: string
+        locale:
+          $ref: "#/components/schemas/Locale"
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - clerkId
+        - email
+        - locale
+        - createdAt
+
+    UpdateMerchantInput:
+      type: object
+      properties:
+        displayName:
+          type: string
+        locale:
+          $ref: "#/components/schemas/Locale"
+
+    LocalizedText:
+      type: object
+      properties:
+        en:
+          type: string
+        ar:
+          type: string
+        es:
+          type: string
+        fr:
+          type: string
+        zh:
+          type: string
+      required:
+        - en
+
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+        merchantId:
+          type: string
+        name:
+          $ref: "#/components/schemas/LocalizedText"
+        description:
+          $ref: "#/components/schemas/LocalizedText"
+        price:
+          type: number
+          format: float
+        currency:
+          type: string
+          default: USD
+        imagePath:
+          type: string
+          nullable: true
+        glbPath:
+          type: string
+          nullable: true
+        usdzPath:
+          type: string
+          nullable: true
+        conversionStatus:
+          $ref: "#/components/schemas/ConversionStatus"
+        source:
+          $ref: "#/components/schemas/ProductSource"
+        externalId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - merchantId
+        - name
+        - price
+        - currency
+        - conversionStatus
+        - source
+        - createdAt
+        - updatedAt
+
+    ProductList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        totalPages:
+          type: integer
+      required:
+        - data
+        - total
+        - page
+        - limit
+        - totalPages
+
+    CreateProductInput:
+      type: object
+      properties:
+        name:
+          $ref: "#/components/schemas/LocalizedText"
+        description:
+          $ref: "#/components/schemas/LocalizedText"
+        price:
+          type: number
+          format: float
+        currency:
+          type: string
+          default: USD
+        imagePath:
+          type: string
+      required:
+        - name
+        - price
+
+    UpdateProductInput:
+      type: object
+      properties:
+        name:
+          $ref: "#/components/schemas/LocalizedText"
+        description:
+          $ref: "#/components/schemas/LocalizedText"
+        price:
+          type: number
+          format: float
+        currency:
+          type: string
+        imagePath:
+          type: string
+
+    ConversionJobStatus:
+      type: object
+      properties:
+        productId:
+          type: string
+        conversionStatus:
+          $ref: "#/components/schemas/ConversionStatus"
+        message:
+          type: string
+      required:
+        - productId
+        - conversionStatus
+
+    EmbedCode:
+      type: object
+      properties:
+        productId:
+          type: string
+        productName:
+          type: string
+        glbUrl:
+          type: string
+        usdzUrl:
+          type: string
+        html:
+          type: string
+      required:
+        - productId
+        - productName
+        - glbUrl
+        - usdzUrl
+        - html
+
+    DashboardStats:
+      type: object
+      properties:
+        totalProducts:
+          type: integer
+        completedConversions:
+          type: integer
+        conversionsInQueue:
+          type: integer
+        externalSyncCount:
+          type: integer
+        externalSyncRatio:
+          type: number
+          format: float
+          description: Ratio of externally-synced products to total products (0–1)
+      required:
+        - totalProducts
+        - completedConversions
+        - conversionsInQueue
+        - externalSyncCount
+        - externalSyncRatio
+
+    ConversionDataPoint:
+      type: object
+      properties:
+        month:
+          type: string
+          description: "Month label e.g. 'Jan 2025'"
+        count:
+          type: integer
+      required:
+        - month
+        - count
+
+    ConversionsChartData:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversionDataPoint"
+      required:
+        - data
+
+    ImportableProduct:
+      type: object
+      properties:
+        externalId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+        currency:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+      required:
+        - externalId
+        - name
+        - price
+        - currency
+
+    ImportPreview:
+      type: object
+      properties:
+        source:
+          $ref: "#/components/schemas/ImportSource"
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportableProduct"
+      required:
+        - source
+        - products
+
+    ImportInput:
+      type: object
+      properties:
+        source:
+          $ref: "#/components/schemas/ImportSource"
+        externalIds:
+          type: array
+          items:
+            type: string
+          description: IDs of products to import. If empty, import all previewed products.
+      required:
+        - source
+
+    ImportResult:
+      type: object
+      properties:
+        imported:
+          type: integer
+        skipped:
+          type: integer
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+      required:
+        - imported
+        - skipped
+        - products

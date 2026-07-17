@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Merchant Dashboard"
+version = "1.0.0"
+id = "artifacts/merchant-dashboard"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19445
+
+[services.development]
+run = "pnpm --filter @workspace/merchant-dashboard run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/merchant-dashboard", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/merchant-dashboard/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19445"
+BASE_PATH = "/"
